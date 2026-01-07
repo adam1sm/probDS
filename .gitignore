@@ -1,0 +1,26 @@
+# Build directories
+build/
+.cache/
+cmake-build-debug/
+cmake-build-release/
+
+# Compiled files
+*.o
+*.a
+*.so
+*.dylib
+*.out
+probds_tests
+probds_benchmarks
+param_calculator
+
+# OS and IDE files
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+
+# Benchmark output files
+benchmark_results.json
