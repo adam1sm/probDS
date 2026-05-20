@@ -118,7 +118,7 @@ public:
     // =========================================================================
 
     /// Query membership of a key
-    // TODO: Optimize lookup path
+    // Optimized lookup path: unrolled loop and branchless mask
     [[nodiscard]] bool possibly_contains(const T& key) const noexcept {
         if (size_ == 0) return false;
         if (size_ == 1) {
