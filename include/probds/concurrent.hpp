@@ -280,7 +280,7 @@ public:
     ConcurrentCountMin(ConcurrentCountMin&&) = delete;
     ConcurrentCountMin& operator=(ConcurrentCountMin&&) = delete;
 
-    // TODO: Resolve thread contention
+    // Lock-free atomic register implementation
     void insert(const T& key, std::int64_t delta = 1) {
         if (delta == 0) return;
         for (std::size_t j = 0; j < depth_; ++j) {
