@@ -79,7 +79,7 @@ public:
     // =========================================================================
 
     /// Insert an item
-    // TODO: Optimize hot-path allocations
+    // Stack-allocated array and fast RNG
     void insert(const T& key, std::uint64_t count = 1) {
         if (count == 0) return;
 
