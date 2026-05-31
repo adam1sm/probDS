@@ -90,3 +90,51 @@ BENCHMARK(BM_BlockedBloomLookupBulk)
     ->Arg(50000000)
     ->Unit(benchmark::kMillisecond);
 
+template <std::size_t BatchSize>
+static void BM_BlockedBloomLookupBatch(benchmark::State& state) {
+    const auto n = static_cast<std::size_t>(state.range(0));
+    const auto keys = generate_keys(n, 42);
+
+    probds::BlockedBloomFilter<std::uint64_t> bbf(n, 0.01);
+    for (const auto& key : keys) {
+        bbf.insert(key);
+    }
+
+    for (auto _ : state) {
+        for (std::size_t i = 0; i + BatchSize - 1 < n; i += BatchSize) {
+            std::array<const std::uint64_t*, BatchSize> batch_keys;
+            for (std::size_t j = 0; j < BatchSize; ++j) {
+                batch_keys[j] = &keys[i + j];
+            }
+            auto res = bbf.template possibly_contains_batch<BatchSize>(batch_keys);
+            benchmark::DoNotOptimize(res);
+        }
+    }
+    state.SetItemsProcessed(state.iterations() * (n - (n % BatchSize)));
+}
+
+BENCHMARK_TEMPLATE(BM_BlockedBloomLookupBatch, 1)
+    ->Arg(10000)
+    ->Arg(1000000)
+    ->Arg(50000000)
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK_TEMPLATE(BM_BlockedBloomLookupBatch, 4)
+    ->Arg(10000)
+    ->Arg(1000000)
+    ->Arg(50000000)
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK_TEMPLATE(BM_BlockedBloomLookupBatch, 8)
+    ->Arg(10000)
+    ->Arg(1000000)
+    ->Arg(50000000)
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK_TEMPLATE(BM_BlockedBloomLookupBatch, 16)
+    ->Arg(10000)
+    ->Arg(1000000)
+    ->Arg(50000000)
+    ->Unit(benchmark::kMillisecond);
+
+

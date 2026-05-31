@@ -107,3 +107,33 @@ TEST(BlockedBloomFilterTest, SetOperations) {
     EXPECT_FALSE(bbf_intersection.possibly_contains("only2"));
 }
 
+TEST(BlockedBloomFilterTest, BatchedLookupMatches) {
+    constexpr std::size_t n = 1000;
+    probds::BlockedBloomFilter<std::string> bbf(n, 0.01);
+
+    std::vector<std::string> keys;
+    for (std::size_t i = 0; i < n; ++i) {
+        keys.push_back(member_key(i));
+        if (i % 2 == 0) {
+            bbf.insert(keys.back());
+        }
+    }
+
+    // Lookup using possibly_contains_batch with various batch sizes
+    constexpr std::size_t batch_size = 8;
+    for (std::size_t i = 0; i + batch_size - 1 < keys.size(); i += batch_size) {
+        std::array<const std::string*, batch_size> batch_keys;
+        std::array<bool, batch_size> expected;
+        for (std::size_t j = 0; j < batch_size; ++j) {
+            batch_keys[j] = &keys[i + j];
+            expected[j] = bbf.possibly_contains(*batch_keys[j]);
+        }
+
+        auto actual = bbf.possibly_contains_batch<batch_size>(batch_keys);
+        for (std::size_t j = 0; j < batch_size; ++j) {
+            EXPECT_EQ(actual[j], expected[j]) << "Mismatch at index " << i + j;
+        }
+    }
+}
+
+

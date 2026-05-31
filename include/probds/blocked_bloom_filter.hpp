@@ -207,6 +207,102 @@ public:
         }
     }
 
+    /// Batched lookup with prefetching and vectorization
+    template <std::size_t N>
+    [[nodiscard]] std::array<bool, N> possibly_contains_batch(
+        const std::array<const T*, N>& keys) const noexcept
+    {
+        alignas(16) std::uint64_t h1_arr[N];
+        alignas(16) std::uint64_t h2_arr[N];
+
+        // 1. Compute all N hash pairs and prefetch all blocks first.
+        for (std::size_t i = 0; i < N; ++i) {
+            auto [h1, h2] = get_hash_pair(*keys[i]);
+            h1_arr[i] = h1;
+            h2_arr[i] = h2;
+            const std::size_t block_idx = h1 & block_mask_;
+            __builtin_prefetch(&blocks_[block_idx], 0, 3);
+        }
+
+        std::array<bool, N> results;
+        results.fill(true);
+
+        std::size_t i = 0;
+
+        // 2. On ARM64, process in chunks of 4 using NEON.
+#if defined(__aarch64__)
+        for (; i + 3 < N; i += 4) {
+            const std::uint32_t* block_words_32[4];
+            for (int j = 0; j < 4; ++j) {
+                const std::size_t b_idx = h1_arr[i + j] & block_mask_;
+                block_words_32[j] = reinterpret_cast<const std::uint32_t*>(blocks_[b_idx].words);
+            }
+
+            uint32x4_t v_h1 = {
+                static_cast<uint32_t>(h1_arr[i]),
+                static_cast<uint32_t>(h1_arr[i + 1]),
+                static_cast<uint32_t>(h1_arr[i + 2]),
+                static_cast<uint32_t>(h1_arr[i + 3])
+            };
+            uint32x4_t v_h2 = {
+                static_cast<uint32_t>(h2_arr[i]),
+                static_cast<uint32_t>(h2_arr[i + 1]),
+                static_cast<uint32_t>(h2_arr[i + 2]),
+                static_cast<uint32_t>(h2_arr[i + 3])
+            };
+
+            const uint32x4_t v_ones = vdupq_n_u32(1);
+            const uint32x4_t v_zero = vdupq_n_u32(0);
+            const uint32x4_t v_mask = vdupq_n_u32(511);
+            const uint32x4_t v_shift_mask = vdupq_n_u32(31);
+
+            for (std::size_t h_idx = 0; h_idx < num_hashes_; ++h_idx) {
+                // Early exit if all 4 results in this chunk are already false.
+                if (!results[i] && !results[i + 1] && !results[i + 2] && !results[i + 3]) {
+                    break;
+                }
+
+                uint32x4_t v_h_idx = vdupq_n_u32(static_cast<uint32_t>(h_idx));
+                uint32x4_t v_pos = vandq_u32(vaddq_u32(v_h2, vmulq_u32(v_h_idx, v_h1)), v_mask);
+                uint32x4_t v_pos_shifted = vshrq_n_u32(v_pos, 5);
+                uint32x4_t v_shifts = vandq_u32(v_pos, v_shift_mask);
+
+                uint32x4_t v_words = vdupq_n_u32(0);
+                v_words = vsetq_lane_u32(block_words_32[0][vgetq_lane_u32(v_pos_shifted, 0)], v_words, 0);
+                v_words = vsetq_lane_u32(block_words_32[1][vgetq_lane_u32(v_pos_shifted, 1)], v_words, 1);
+                v_words = vsetq_lane_u32(block_words_32[2][vgetq_lane_u32(v_pos_shifted, 2)], v_words, 2);
+                v_words = vsetq_lane_u32(block_words_32[3][vgetq_lane_u32(v_pos_shifted, 3)], v_words, 3);
+
+                int32x4_t v_shifts_signed = vreinterpretq_s32_u32(v_shifts);
+                uint32x4_t v_bit_masks = vshlq_u32(v_ones, v_shifts_signed);
+
+                uint32x4_t v_and_res = vandq_u32(v_words, v_bit_masks);
+                uint32x4_t v_cmp = vceqq_u32(v_and_res, v_zero);
+
+                results[i]     = results[i]     && (vgetq_lane_u32(v_cmp, 0) == 0);
+                results[i + 1] = results[i + 1] && (vgetq_lane_u32(v_cmp, 1) == 0);
+                results[i + 2] = results[i + 2] && (vgetq_lane_u32(v_cmp, 2) == 0);
+                results[i + 3] = results[i + 3] && (vgetq_lane_u32(v_cmp, 3) == 0);
+            }
+        }
+#endif
+
+        // 3. Scalar fallback for remainder elements.
+        for (; i < N; ++i) {
+            const std::size_t b_idx = h1_arr[i] & block_mask_;
+            const auto& block = blocks_[b_idx];
+            for (std::size_t h_idx = 0; h_idx < num_hashes_; ++h_idx) {
+                const std::size_t pos = (h2_arr[i] + h_idx * h1_arr[i]) & 511;
+                if (!(block.words[pos >> 6] & (std::uint64_t{1} << (pos & 63)))) {
+                    results[i] = false;
+                    break;
+                }
+            }
+        }
+
+        return results;
+    }
+
     // =========================================================================
     // Set Operations
     // =========================================================================
